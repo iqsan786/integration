@@ -79,7 +79,7 @@ def main():
     queue_name = config["rabbitmq"]["read_queue"]
     channel.queue_declare(queue=queue_name, durable=True)
 
-    logger.info("[START] Multi-Analytics System Running...")
+    logger.info("[START] Listening...")
 
     channel.basic_consume(
         queue=queue_name,
