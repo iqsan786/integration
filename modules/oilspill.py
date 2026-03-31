@@ -41,6 +41,7 @@ class OilSpillSystem:
         self.model_paths = config["paths"]["model_paths"]
 
         self.model = None
+        # self.model = YOLO(config["paths"]["model_paths"]["OILSPILL"])
         self.current_object = None
 
         self.EVENT_DIR = config["paths"]["event_dir"]

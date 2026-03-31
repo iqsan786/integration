@@ -66,7 +66,7 @@ class ObstacleDetectionSystem:
 
         self.EVENT_DIR = config["paths"]["event_dir"]
 
-        self.model = YOLO(config["paths"]["model_path"]["obstacle_detection"])
+        self.model = YOLO(config["paths"]["model_paths"]["OBSTACLE"])
 
         os.makedirs(self.EVENT_DIR, exist_ok=True)
 
@@ -202,7 +202,7 @@ class ObstacleDetectionSystem:
 
                     object_types = [v.replace(" ", "").upper() for v in values]
 
-                    # ✅ ONLY obstacle classes
+                    
                     if not any(obj in SMOOTH_FRAMES for obj in object_types):
                         continue
 

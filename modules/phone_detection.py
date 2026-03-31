@@ -69,7 +69,8 @@ class PhoneDetectionSystem:
 
         os.makedirs(self.EVENT_DIR, exist_ok=True)
 
-        self.detector = None
+        self.model = None
+        # self.model = YOLO(config["paths"]["model_paths"]["PHONE"])
         self.current_object = None
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -126,7 +127,7 @@ class PhoneDetectionSystem:
     # --------------------------------------------------
     def detect(self, frame):
 
-        results = self.detector(frame, conf=MIN_CONFIDENCE, verbose=False)[0]
+        results = self.model(frame, conf=MIN_CONFIDENCE, verbose=False)[0]
 
         drivers = []
         phones = []
@@ -219,8 +220,8 @@ class PhoneDetectionSystem:
             logger.warning(f"No model for {object_name}")
             return frame
 
-        if self.current_object != object_name or self.detector is None:
-            self.detector = YOLO(model_path)
+        if self.current_object != object_name or self.model is None:
+            self.model = YOLO(model_path)
             self.current_object = object_name
             logger.info(f"[MODEL] Loaded {object_name}")
 

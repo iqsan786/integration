@@ -40,7 +40,7 @@ class TyreSystem:
     def __init__(self, config):
 
         self.model_paths = config["paths"]["model_paths"]
-
+        # self.model = YOLO(config["paths"]["model_paths"]["TYRE"])
         self.model = None
         self.current_object = None
 

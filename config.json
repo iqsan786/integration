@@ -1,0 +1,17 @@
+{
+  "rabbitmq": {
+    "read_queue": "reader_object_analytics"
+  },
+  "paths": {
+    "debug_frames_dir": "/u1/code/frames",
+    "event_dir": "/u1/code/check",
+    "crop_images": "/u1/code/crops",
+    "model_paths": {
+      "TYRE": "tyre.pt",
+      "OILSPILL": "oil1.pt",
+      "MOBILE": "mobile.pt",
+      "SEATBELT": "seatbelt.pt",
+      "OBSTACLE": "obstacle.pt"
+    }
+  }
+}
