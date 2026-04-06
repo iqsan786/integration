@@ -12,6 +12,10 @@ from modules.seatbelt import SeatbeltSystem
 from modules.phone_detection import PhoneDetectionSystem
 from modules.tyre import TyreSystem
 from modules.seatbelt import SeatbeltSystem
+from modules.trajectory import TrajectoryDetectionSystem
+from modules.oilspill import OilSpillSystem
+from modules.suspended import SuspendedLoadSystem
+from modules.guardrail import GuardrailSystem
 
 
 logging.basicConfig(level=logging.INFO)
@@ -25,21 +29,44 @@ def build_systems(config):
     systems.append(SeatbeltSystem(config))
     systems.append(PhoneDetectionSystem(config))
     systems.append(TyreSystem(config))
-    systems.append(SeatbeltSystem(config))
-
-
+    systems.append(TrajectoryDetectionSystem(config))
+    systems.append(OilSpillSystem(config))
+    systems.append(SuspendedLoadSystem(config))
+    systems.append(GuardrailSystem(config))
 
     return systems
 
 
+# def process_frame_all(frame, msg, systems):
+#     for system in systems:
+#         try:
+#             frame = system.process_frame(frame, msg)
+#         except Exception as e:
+#             logger.error(f"{system.__class__.__name__} failed: {e}")
+#     return frame
 def process_frame_all(frame, msg, systems):
+
+    camera_config = msg.get("camera_config", {})
+
+    active_analytics = set()
+
+    for group in camera_config.get("readerMetrics", []):
+        for metric in group.get("metricJson", []):
+            for st in metric.get("subType", []):
+                if st.get("active"):
+                    active_analytics.add(st.get("name"))
+
     for system in systems:
+        if hasattr(system, "SUPPORTED_ANALYTICS"):
+            if not active_analytics.intersection(system.SUPPORTED_ANALYTICS):
+                continue  # 🔥 skip system
+
         try:
             frame = system.process_frame(frame, msg)
         except Exception as e:
             logger.error(f"{system.__class__.__name__} failed: {e}")
-    return frame
 
+    return frame
 
 def callback(ch, method, properties, body, systems):
     try:

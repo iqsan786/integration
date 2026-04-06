@@ -48,6 +48,7 @@ def point_in_polygon(x, y, polygon):
 # SYSTEM (MODULE ONLY)
 # --------------------------------------------------
 class SeatbeltSystem:
+    SUPPORTED_ANALYTICS = {"ob-seat_belt_detection"}
 
     def __init__(self, config):
 
@@ -93,6 +94,37 @@ class SeatbeltSystem:
 
         cv2.imwrite(full_path, frame)
 
+        return os.path.abspath(full_path)
+    def save_crop(self, frame, bbox, date_obj, ip):
+
+        h, w = frame.shape[:2]
+        x1, y1, x2, y2 = map(int, bbox)
+
+        x1 = max(0, x1)
+        y1 = max(0, y1)
+        x2 = min(w, x2)
+        y2 = min(h, y2)
+
+        if x2 <= x1 or y2 <= y1:
+            return None
+
+        crop = frame[y1:y2, x1:x2]
+        if crop.size == 0:
+            return None
+
+        path = os.path.join(
+            self.crop_dir,
+            ip.replace(".", "_"),
+            date_obj.strftime("%Y-%m-%d"),
+            f"{date_obj.hour:02d}-{(date_obj.hour+1)%24:02d}"
+        )
+
+        os.makedirs(path, exist_ok=True)
+
+        filename = f"{self.current_object}_{date_obj.strftime('%Y%m%d_%H%M%S_%f')[:-3]}.jpg"
+        full_path = os.path.join(path, filename)
+
+        cv2.imwrite(full_path, crop)
         return os.path.abspath(full_path)
 
 
@@ -190,7 +222,7 @@ class SeatbeltSystem:
 
 
         # ---------------- LOAD MODEL ----------------
-        object_name = analytics_list[0]["object"]
+        object_name = "seatbelt"
 
         model_path = self.model_paths.get(object_name)
 
@@ -255,6 +287,12 @@ class SeatbeltSystem:
             date_obj = datetime.fromtimestamp(timestamp)
 
             frame_path = self.save_frame(frame, date_obj, camera_ip, frame_id)
+            crop_paths = []
+            for i, det in enumerate(box):
+                crop = self.save_crop(frame, det["bbox"], date_obj, camera_ip, i)
+                if crop:
+                    crop_paths.append(crop)
+
 
             payload = {
                 "readerId": reader_id,
@@ -267,7 +305,8 @@ class SeatbeltSystem:
                 "detectionTime": date_obj.strftime("%Y-%m-%d %H:%M:%S"),
                 "frameLocation": frame_path,
                 "roiCoordinates": [{"x": x, "y": y} for x, y in roi_polygon] if roi_polygon else None,
-                "success": success
+                "success": success,
+                "crops": crop_paths
             }
 
             publish_to_queues(payload)
@@ -275,3 +314,4 @@ class SeatbeltSystem:
             logger.info("[PUBLISH] Seatbelt violation")
 
         return frame
+    

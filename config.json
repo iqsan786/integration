@@ -7,11 +7,16 @@
     "event_dir": "/u1/code/check",
     "crop_images": "/u1/code/crops",
     "model_paths": {
-      "TYRE": "tyre.pt",
-      "OILSPILL": "oil1.pt",
-      "MOBILE": "mobile.pt",
-      "SEATBELT": "seatbelt.pt",
-      "OBSTACLE": "obstacle.pt"
+      "tyre": "tyre.pt",
+      "oilspill": "oil1.pt",
+      "mobile": "mobile.pt",
+      "seatbelt": "seatbelt.pt",
+      "obstacle": "obstacle.pt",
+      "machine_model": "dbconst.pt",
+      "human_model": "yolov8x.pt",
+      "cotton": "cotton.pt",
+      "guardrail": "guardrail.pt",
+      "suspended": "suspended.pt"
     }
   }
 }

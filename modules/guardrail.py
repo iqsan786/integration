@@ -3,17 +3,13 @@ import cv2
 import numpy as np
 import logging
 from datetime import datetime
-
-import torch
-import torch.nn as nn
-from torchvision import transforms, models
 from ultralytics import YOLO
 
 from shared.rabbitmq_utils import publish_to_queues
 
 logger = logging.getLogger(__name__)
 
-MIN_CONFIDENCE = 0.12
+MIN_CONFIDENCE = 0.35
 ORIGINAL_ROI_WIDTH = 766
 ORIGINAL_ROI_HEIGHT = 350
 
@@ -43,60 +39,27 @@ def point_in_polygon(x, y, polygon):
 
 
 # --------------------------------------------------
-# CLASSIFIER
+# SYSTEM
 # --------------------------------------------------
-class DistractedDriverClassifier(nn.Module):
-    def __init__(self):
-        super().__init__()
-        model = models.mobilenet_v2(pretrained=False)
-        in_features = model.classifier[1].in_features
-        model.classifier[1] = nn.Linear(in_features, 2)
-        self.model = model
+class GuardrailSystem:
 
-    def forward(self, x):
-        return self.model(x)
-
-
-# --------------------------------------------------
-# SYSTEM (MODULE)
-# --------------------------------------------------
-class PhoneDetectionSystem:
-    SUPPORTED_ANALYTICS = {"ob-mobile_phone_usage_detection"}
+    SUPPORTED_ANALYTICS = {"ob-working_beyond_guardrail_detection"}
 
     def __init__(self, config):
 
-        self.EVENT_DIR = config["paths"]["event_dir"]
         self.model_paths = config["paths"]["model_paths"]
-
-        os.makedirs(self.EVENT_DIR, exist_ok=True)
+        self.crop_dir = config["paths"].get("crop_images", "./crops")
 
         self.model = None
-        # self.model = YOLO(config["paths"]["model_paths"]["PHONE"])
         self.current_object = None
 
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.EVENT_DIR = config["paths"]["event_dir"]
+        os.makedirs(self.EVENT_DIR, exist_ok=True)
 
-        # 🔥 CLASSIFIER LOAD (once)
-        self.classifier = DistractedDriverClassifier()
-        self.classifier.load_state_dict(
-            torch.load(config["paths"]["classifier_model"], map_location=self.device)
-        )
-        self.classifier.to(self.device)
-        self.classifier.eval()
-
-        self.transform = transforms.Compose([
-            transforms.ToPILImage(),
-            transforms.Resize((224, 224)),
-            transforms.ToTensor(),
-            transforms.Normalize(
-                mean=[0.485, 0.456, 0.406],
-                std=[0.229, 0.224, 0.225]
-            )
-        ])
-
-        logger.info("[INIT] Phone Detection Ready")
+        logger.info("[INIT] Working Beyond Guardrail System Ready")
 
 
+    # --------------------------------------------------
     def scale_roi(self, roi, w, h):
         return [
             ((x / ORIGINAL_ROI_WIDTH) * w,
@@ -105,6 +68,7 @@ class PhoneDetectionSystem:
         ]
 
 
+    # --------------------------------------------------
     def save_frame(self, frame, date_obj, ip, frame_id):
 
         path = os.path.join(
@@ -116,13 +80,13 @@ class PhoneDetectionSystem:
 
         os.makedirs(path, exist_ok=True)
 
-        filename = f"phone_detection_{date_obj.strftime('%Y%m%d_%H%M%S_%f')[:-3]}_{frame_id}.jpg"
+        filename = f"guardrail_{date_obj.strftime('%Y%m%d_%H%M%S_%f')[:-3]}_{frame_id}.jpg"
 
         full_path = os.path.join(path, filename)
 
         cv2.imwrite(full_path, frame)
-
         return os.path.abspath(full_path)
+    
     def save_crop(self, frame, bbox, date_obj, ip):
 
         h, w = frame.shape[:2]
@@ -161,42 +125,27 @@ class PhoneDetectionSystem:
 
         results = self.model(frame, conf=MIN_CONFIDENCE, verbose=False)[0]
 
-        drivers = []
-        phones = []
+        detections = []
 
         if results.boxes is None:
-            return drivers, phones
+            return detections
 
         for box in results.boxes:
-
-            cls = int(box.cls[0])
             x1, y1, x2, y2 = map(int, box.xyxy[0])
             conf = float(box.conf[0])
 
-            if cls == 0:  # driver
-                drivers.append((x1, y1, x2, y2, conf))
+            detections.append({
+                "bbox": [x1, y1, x2, y2],
+                "confidence": conf
+            })
 
-            elif cls == 67:  # phone
-                phones.append((x1, y1, x2, y2, conf))
-
-        return drivers, phones
-
-
-    def classify_driver(self, crop):
-
-        img = self.transform(crop).unsqueeze(0).to(self.device)
-
-        with torch.no_grad():
-            logits = self.classifier(img)
-            probs = torch.softmax(logits, dim=1)[0].cpu().numpy()
-
-        pred = int(np.argmax(probs))
-        return pred, float(probs[pred])
+        return detections
 
 
-    # 🔥 MAIN ENTRY
+    # --------------------------------------------------
     def process_frame(self, frame, msg):
 
+        # ---------------- BASIC INFO ----------------
         camera_config = msg.get("camera_config", {})
 
         reader_id = msg["reader_id"]
@@ -209,42 +158,36 @@ class PhoneDetectionSystem:
 
         h, w = frame.shape[:2]
 
-        # ---------------- ANALYTICS ----------------
+        # ---------------- ANALYTICS EXTRACTION ----------------
         analytics_list = []
 
         for group in camera_config.get("readerMetrics", []):
             if group.get("metricType") != "object_analytics":
                 continue
 
-                
             for metric in group.get("metricJson", []):
-
                 for st in metric.get("subType", []):
 
                     if not st.get("active"):
                         continue
 
-                    attr_maps = st.get("attributeMaps", [])
-                    if not attr_maps:
+                    if st.get("name") != "ob-working_beyond_guardrail_detection":
                         continue
 
-                    values = attr_maps[0].get("attributeValue", [])
-                    if not values:
-                        continue
+                    attr_maps = st.get("attributeMaps", [{}])[0]
 
                     analytics_list.append({
                         "type": st.get("name"),
-                        "object": values[0].lower(),
-                        "attributeName": attr_maps[0].get("attributeName"),
-                        "attributeValue": values
+                        "attributeName": attr_maps.get("attributeName"),
+                        "attributeValue": attr_maps.get("attributeValue")
                     })
 
         if not analytics_list:
             return frame
 
 
-        # ---------------- MODEL LOAD ----------------
-        object_name = "mobile"
+        # ---------------- MODEL LOAD (FORCED OBJECT) ----------------
+        object_name = "guardrail"
 
         model_path = self.model_paths.get(object_name)
 
@@ -258,7 +201,7 @@ class PhoneDetectionSystem:
             logger.info(f"[MODEL] Loaded {object_name}")
 
 
-        # ---------------- ROI ----------------
+        # ---------------- ROI MAP ----------------
         roi_map = {}
 
         for roi in camera_config.get("readerRois", []):
@@ -284,57 +227,49 @@ class PhoneDetectionSystem:
 
 
         # ---------------- DETECTION ----------------
-        drivers, phones = self.detect(frame)
+        detections = self.detect(frame)
 
-        if not drivers:
-            return frame
-
-        driver = max(drivers, key=lambda b: (b[2]-b[0])*(b[3]-b[1]))
-        x1, y1, x2, y2, _ = driver
-
-        crop = frame[y1:y2, x1:x2]
-        if crop.size == 0:
-            return frame
-
-        pred, conf = self.classify_driver(crop)
-        distracted = (pred == 1)
-
-        # phone overlap
-        for px1, py1, px2, py2, _ in phones:
-            if not (px2 < x1 or px1 > x2 or py2 < y1 or py1 > y2):
-                distracted = True
-                break
-
-        if not distracted:
+        if not detections:
             return frame
 
 
-        # ---------------- PUBLISH ----------------
+        # ---------------- PROCESS ----------------
         for analytics in analytics_list:
 
             atype = analytics["type"]
             roi_polygon = roi_map.get(atype)
 
+            valid = []
+
             if roi_polygon:
-                cx = (x1 + x2) / 2
-                cy = (y1 + y2) / 2
+                for det in detections:
+                    x1, y1, x2, y2 = det["bbox"]
+                    cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
 
-                if not point_in_polygon(cx, cy, roi_polygon):
-                    continue
+                    if point_in_polygon(cx, cy, roi_polygon):
+                        valid.append(det)
+            else:
+                valid = detections
 
+            success = len(valid) > 0
+
+            if not success:
+                continue
+
+
+            # ---------------- SAVE + PUBLISH ----------------
             date_obj = datetime.fromtimestamp(timestamp)
 
             frame_path = self.save_frame(frame, date_obj, camera_ip, frame_id)
             crop_paths = []
-            for i, det in enumerate(phones):
+            for i, det in enumerate(valid):
                 crop = self.save_crop(frame, det["bbox"], date_obj, camera_ip, i)
                 if crop:
                     crop_paths.append(crop)
 
-
             payload = {
                 "readerId": reader_id,
-                "type": "object_detection",
+                "type": atype,
                 "attributeName": analytics["attributeName"],
                 "attributeValue": analytics["attributeValue"],
                 "frameId": frame_id,
@@ -343,13 +278,13 @@ class PhoneDetectionSystem:
                 "detectionTime": date_obj.strftime("%Y-%m-%d %H:%M:%S"),
                 "frameLocation": frame_path,
                 "roiCoordinates": [{"x": x, "y": y} for x, y in roi_polygon] if roi_polygon else None,
-                "success": distracted,
-                "confidence": conf,
+                "detections": valid,
+                "success": success,
                 "crops": crop_paths
             }
 
             publish_to_queues(payload)
 
-            logger.info("[PUBLISH] Phone Usage Detected")
+            logger.info("[PUBLISH] guardrail Detected")
 
         return frame
